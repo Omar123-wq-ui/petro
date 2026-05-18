@@ -322,7 +322,7 @@ HTML = r"""<!DOCTYPE html>
 <meta name="theme-color" content="#07090f">
 <title>PetroCalc Pro</title>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
-<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root{
   --bg:#07090f;--bg2:#0c1018;--bg3:#111720;
@@ -796,20 +796,36 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
      JAVASCRIPT
 ═══════════════════════════════════════ -->
 <script>
-// ── PLOTLY DARK THEME ─────────────────────────────────────────
-const PLOT_LAYOUT = {
-  paper_bgcolor: 'rgba(7,9,15,0)',
-  plot_bgcolor:  'rgba(7,9,15,0)',
-  font: { family: 'JetBrains Mono, monospace', color: '#94a3b8', size: 11 },
-  margin: { t: 36, r: 20, b: 50, l: 60 },
-  xaxis: { gridcolor: 'rgba(251,191,36,.08)', linecolor: 'rgba(251,191,36,.2)', zerolinecolor: 'rgba(251,191,36,.15)' },
-  yaxis: { gridcolor: 'rgba(251,191,36,.08)', linecolor: 'rgba(251,191,36,.2)', zerolinecolor: 'rgba(251,191,36,.15)' },
-  legend: { bgcolor: 'rgba(0,0,0,0)', bordercolor: 'rgba(251,191,36,.2)', borderwidth: 1 },
-  hoverlabel: { bgcolor: '#111720', bordercolor: '#fbbf24', font: { color: '#e2e8f0' } },
+// ── CHART.JS HELPERS ──────────────────────────────────────────
+const CHART_DEFAULTS = {
+  gridColor: 'rgba(251,191,36,0.08)',
+  textColor: '#94a3b8',
+  fontFamily: 'JetBrains Mono, monospace',
 };
-const PLOT_CONFIG = { responsive: true, displayModeBar: true,
-  modeBarButtonsToRemove: ['lasso2d','select2d','autoScale2d'],
-  toImageButtonOptions: { format: 'png', filename: 'petroCalc' } };
+const chartInstances = {};
+
+function destroyChart(id) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+}
+
+function makeChartOptions(xLabel, yLabel, extraOpts={}) {
+  return {
+    responsive: true,
+    animation: { duration: 400 },
+    plugins: {
+      legend: { labels: { color: CHART_DEFAULTS.textColor, font: { size: 11, family: CHART_DEFAULTS.fontFamily } } },
+      tooltip: { backgroundColor: '#111720', titleColor: '#e2e8f0', bodyColor: '#94a3b8', borderColor: 'rgba(251,191,36,.3)', borderWidth: 1 },
+    },
+    scales: {
+      x: { title: { display: true, text: xLabel, color: CHART_DEFAULTS.textColor, font: { size: 10 } },
+           grid: { color: CHART_DEFAULTS.gridColor }, ticks: { color: CHART_DEFAULTS.textColor, font: { size: 10 } } },
+      y: { title: { display: true, text: yLabel, color: CHART_DEFAULTS.textColor, font: { size: 10 } },
+           grid: { color: CHART_DEFAULTS.gridColor }, ticks: { color: CHART_DEFAULTS.textColor, font: { size: 10 } },
+           ...( extraOpts.reverseY ? { reverse: true } : {} ) },
+    },
+    ...extraOpts,
+  };
+}
 
 // ── LANGUAGE ─────────────────────────────────────────────────
 let LANG = 'ru';
@@ -862,7 +878,7 @@ const PAT_CLS = {
   'Distributed': 'pat-dis',
   'Transition':  'pat-tr',
 };
-const PAT_RU = {s
+const PAT_RU = {
   'Segregated':  'Расслоённый',
   'Intermittent':'Прерывистый (пробковый)',
   'Distributed': 'Дисперсный',
@@ -918,26 +934,32 @@ async function calcBB() {
       <div class="rc"><div class="rl">Гравитац. потери</div><div class="rv">${d.dpdz_elevation_Pa_m}</div><div class="ru">Па/м</div></div>
       <div class="rc"><div class="rl">Потери трения</div><div class="rv">${d.dpdz_friction_Pa_m}</div><div class="ru">Па/м</div></div>
     </div>
-    <div class="plot-box" id="plot-bb"></div>`;
+    <div class="plot-box" id="plot-bb"><canvas id="canvas-bb"></canvas></div>`;
 
-  // ── Plotly pressure profile ──
-  Plotly.newPlot('plot-bb', [{
-    x: d.pressures,
-    y: d.depths,
-    type: 'scatter',
-    mode: 'lines',
-    name: LANG === 'ru' ? 'Давление (бар)' : 'Pressure (bar)',
-    line: { color: '#fbbf24', width: 2.5, shape: 'spline' },
-    fill: 'tozerox',
-    fillcolor: 'rgba(251,191,36,0.05)',
-    hovertemplate: '<b>Глубина:</b> %{y} м<br><b>Давление:</b> %{x} бар<extra></extra>',
-  }], {
-    ...PLOT_LAYOUT,
-    title: { text: LANG === 'ru' ? 'Профиль давления по глубине' : 'Pressure vs Depth Profile',
-             font: { color: '#fbbf24', size: 13 } },
-    xaxis: { ...PLOT_LAYOUT.xaxis, title: { text: 'Давление, бар', font: { color: '#94a3b8' } } },
-    yaxis: { ...PLOT_LAYOUT.yaxis, title: { text: 'Глубина, м', font: { color: '#94a3b8' } }, autorange: 'reversed' },
-  }, PLOT_CONFIG);
+  // ── Chart.js pressure profile ──
+  destroyChart('bb');
+  const ctx = document.getElementById('canvas-bb').getContext('2d');
+  chartInstances['bb'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: d.pressures,
+      datasets: [{
+        label: 'Давление (бар)',
+        data: d.depths.map((y, i) => ({ x: d.pressures[i], y })),
+        borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.07)',
+        borderWidth: 2.5, tension: 0.4, fill: true,
+        pointRadius: 2, pointBackgroundColor: '#fbbf24',
+      }]
+    },
+    options: {
+      ...makeChartOptions('Давление, бар', 'Глубина, м', { reverseY: true }),
+      plugins: {
+        ...makeChartOptions('','').plugins,
+        title: { display: true, text: 'Профиль давления по глубине', color: '#fbbf24', font: { size: 13, family: 'JetBrains Mono, monospace' } },
+      },
+      parsing: { xAxisKey: 'x', yAxisKey: 'y' },
+    }
+  });
 }
 
 // ── SCALE INDEX ───────────────────────────────────────────────
@@ -973,39 +995,39 @@ async function calcScale() {
       <div class="rc cg"><div class="rl">Глубина осадка</div><div class="rv tg">${d.scale_depth_m || '—'}</div><div class="ru">м</div></div>
     </div>
     <div class="${bannerCls}" style="margin-top:10px"><span>🧪</span><div><strong>${d.verdict}</strong><br>${depthStr}</div></div>
-    <div class="plot-box" id="plot-scale"></div>`;
+    <div class="plot-box" id="plot-scale"><canvas id="canvas-scale"></canvas></div>`;
 
-  // Zero line and fill
-  const colors = d.si_profile.map(v => v > 0 ? 'rgba(244,63,94,0.8)' : 'rgba(16,185,129,0.8)');
-  Plotly.newPlot('plot-scale', [
-    {
-      x: d.temps,
-      y: d.si_profile,
-      type: 'scatter',
-      mode: 'lines+markers',
-      name: 'Индекс SI',
-      line: { color: '#fbbf24', width: 2.5, shape: 'spline' },
-      marker: { color: colors, size: 5 },
-      fill: 'tozeroy',
-      fillcolor: d.SI > 0 ? 'rgba(244,63,94,0.06)' : 'rgba(16,185,129,0.06)',
-      hovertemplate: '<b>T:</b> %{x}°C<br><b>SI:</b> %{y:.3f}<extra></extra>',
+  // ── Chart.js SI profile ──
+  destroyChart('scale');
+  const ctxS = document.getElementById('canvas-scale').getContext('2d');
+  chartInstances['scale'] = new Chart(ctxS, {
+    type: 'line',
+    data: {
+      labels: d.temps,
+      datasets: [
+        {
+          label: 'Индекс SI',
+          data: d.si_profile,
+          borderColor: '#fbbf24', backgroundColor: d.SI > 0 ? 'rgba(244,63,94,0.07)' : 'rgba(16,185,129,0.07)',
+          borderWidth: 2.5, tension: 0.4, fill: true, pointRadius: 3,
+          pointBackgroundColor: d.si_profile.map(v => v > 0 ? '#f43f5e' : '#10b981'),
+        },
+        {
+          label: 'Граница SI=0',
+          data: d.temps.map(() => 0),
+          borderColor: '#64748b', borderWidth: 1.5, borderDash: [6, 4],
+          pointRadius: 0, fill: false,
+        }
+      ]
     },
-    {
-      x: [d.temps[0], d.temps[d.temps.length-1]],
-      y: [0, 0],
-      type: 'scatter', mode: 'lines',
-      name: 'Граница (SI=0)',
-      line: { color: '#64748b', width: 1.5, dash: 'dash' },
+    options: {
+      ...makeChartOptions('Температура, °C', 'Индекс SI'),
+      plugins: {
+        ...makeChartOptions('','').plugins,
+        title: { display: true, text: 'Термодинамическая стабильность CaCO₃', color: '#fbbf24', font: { size: 12, family: 'JetBrains Mono, monospace' } },
+      }
     }
-  ], {
-    ...PLOT_LAYOUT,
-    title: { text: 'Термодинамическая стабильность CaCO₃ — SI vs Температура',
-             font: { color: '#fbbf24', size: 12 } },
-    xaxis: { ...PLOT_LAYOUT.xaxis, title: { text: 'Температура, °C', font: { color: '#94a3b8' } } },
-    yaxis: { ...PLOT_LAYOUT.yaxis, title: { text: 'Индекс SI', font: { color: '#94a3b8' } } },
-    shapes: [{ type: 'line', x0: d.temps[0], x1: d.temps[d.temps.length-1], y0: 0, y1: 0,
-               line: { color: 'rgba(100,116,139,.4)', dash: 'dot', width: 1 } }],
-  }, PLOT_CONFIG);
+  });
 }
 
 // ── ESP DEGRADATION ───────────────────────────────────────────
@@ -1067,36 +1089,40 @@ async function calcESP() {
         d.k_total > 0.6 ? 'Умеренная деградация. Рекомендуется мониторинг.' : 
         'Критическая деградация. Требуется вмешательство.'}</div>
     </div>
-    <div class="plot-box" id="plot-esp"></div>`;
+    <div class="plot-box" id="plot-esp"><canvas id="canvas-esp"></canvas></div>`;
 
-  Plotly.newPlot('plot-esp', [
-    {
-      x: d.q_nominal,
-      y: d.h_nominal,
-      type: 'scatter', mode: 'lines+markers',
-      name: LANG === 'ru' ? '📋 Паспортная кривая' : '📋 Nameplate curve',
-      line: { color: '#38bdf8', width: 2.5, shape: 'spline' },
-      marker: { color: '#38bdf8', size: 7 },
-      hovertemplate: '<b>Q:</b> %{x} м³/сут<br><b>H:</b> %{y} м<extra></extra>',
+  // ── Chart.js Q-H curves ──
+  destroyChart('esp');
+  const ctxE = document.getElementById('canvas-esp').getContext('2d');
+  chartInstances['esp'] = new Chart(ctxE, {
+    type: 'line',
+    data: {
+      labels: d.q_nominal,
+      datasets: [
+        {
+          label: '📋 Паспортная кривая',
+          data: d.h_nominal,
+          borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.06)',
+          borderWidth: 2.5, tension: 0.4, fill: false,
+          pointRadius: 5, pointBackgroundColor: '#38bdf8',
+        },
+        {
+          label: '⚠️ Реальная (деградация)',
+          data: d.h_degraded,
+          borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.06)',
+          borderWidth: 2.5, borderDash: [6, 4], tension: 0.4, fill: true,
+          pointRadius: 5, pointBackgroundColor: '#f43f5e',
+        }
+      ]
     },
-    {
-      x: d.q_degraded,
-      y: d.h_degraded,
-      type: 'scatter', mode: 'lines+markers',
-      name: LANG === 'ru' ? '⚠️ Реальная кривая' : '⚠️ Actual (degraded)',
-      line: { color: '#f43f5e', width: 2.5, shape: 'spline', dash: 'dot' },
-      marker: { color: '#f43f5e', size: 7 },
-      fill: 'tonexty',
-      fillcolor: 'rgba(244,63,94,0.06)',
-      hovertemplate: '<b>Q:</b> %{x} м³/сут<br><b>H:</b> %{y} м<extra></extra>',
+    options: {
+      ...makeChartOptions('Q, м³/сут', 'H, м (напор)'),
+      plugins: {
+        ...makeChartOptions('','').plugins,
+        title: { display: true, text: 'Кривая Q–H: Паспортная vs Реальная', color: '#fbbf24', font: { size: 13, family: 'JetBrains Mono, monospace' } },
+      }
     }
-  ], {
-    ...PLOT_LAYOUT,
-    title: { text: LANG === 'ru' ? 'Кривая Q–H: Паспортная vs Реальная' : 'Q–H Curve: Nameplate vs Degraded',
-             font: { color: '#fbbf24', size: 13 } },
-    xaxis: { ...PLOT_LAYOUT.xaxis, title: { text: 'Q, м³/сут', font: { color: '#94a3b8' } } },
-    yaxis: { ...PLOT_LAYOUT.yaxis, title: { text: 'H, м', font: { color: '#94a3b8' } } },
-  }, PLOT_CONFIG);
+  });
 }
 
 // Show ver badge on mobile
